@@ -1,0 +1,291 @@
+# Workflow name displayed in GitHub Actions UI
+# Learn more: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#name
+name: Unit Tests
+
+# Required Secrets Configuration:
+# GitHub Encrypted Secrets for read-only infrastructure validation
+# Learn more: https://docs.github.com/en/actions/security-guides/encrypted-secrets
+#
+# Navigate to Settings > Secrets and variables > Actions > New repository secret
+# Add the following secrets:
+#   - AZURE_CLIENT_ID: Service Principal Client ID (requires Reader role)
+#   - AZURE_TENANT_ID: Azure AD (Entra ID) Tenant ID
+#   - AZURE_SUBSCRIPTION_ID: Azure Subscription ID for validation
+# Azure OIDC Authentication: https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure
+
+# Workflow triggers - Runs on pull requests to prevent bad code from merging
+# Learn more: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows
+on:
+  # Trigger on pull requests targeting main, dev, or qa branches
+  # Pull request events: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#pull_request
+  pull_request:
+    branches:
+      - main
+      - dev
+      - qa
+    # Path filters ensure tests run only when relevant files change
+    paths:
+      - 'demos/github-webapp-demo/bicep/**'
+      - 'demos/github-webapp-demo/parameters/**'
+      - 'demos/github-webapp-demo/tests/**'
+      - '.github/workflows/unit-tests.yml'
+  # Allow manual workflow execution for ad-hoc testing
+  workflow_dispatch:
+
+# Workflow permissions with pull request write access for comments
+# Learn more: https://docs.github.com/en/actions/security-guides/automatic-token-authentication#permissions-for-the-github_token
+permissions:
+  # Required for OIDC authentication with Azure
+  id-token: write
+  # Required to checkout repository code
+  contents: read
+  # Required to comment on pull requests with test results
+  # Pull request comments API: https://docs.github.com/en/rest/issues/comments
+  pull-requests: write
+
+# Jobs define the testing pipeline
+# Multiple jobs run in parallel for faster feedback
+jobs:
+  # Lint and Validate job checks Bicep syntax and compiles templates
+  # Bicep linting: https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/linter
+  lint-and-validate:
+    name: Lint and Validate Bicep
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout repository code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Setup Bicep CLI for linting and compilation
+      # Bicep CLI: https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/install
+      # Latest Bicep releases: https://github.com/Azure/bicep/releases
+      - name: Setup Bicep CLI
+        run: |
+          # Download latest Bicep CLI binary for Linux
+          curl -Lo bicep https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64
+          # Make binary executable
+          chmod +x ./bicep
+          # Move to system path
+          sudo mv ./bicep /usr/local/bin/bicep
+          # Verify installation
+          bicep --version
+
+      # Lint all Bicep files in the bicep directory
+      # Bicep build command: https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/bicep-cli#build
+      - name: Lint Bicep files
+        working-directory: demos/github-webapp-demo/bicep
+        run: |
+          echo "Linting Bicep files..."
+          # Loop through all .bicep files and validate each one
+          # Shell scripting: find command locates all Bicep files
+          for file in $(find . -name "*.bicep"); do
+            echo "Linting $file..."
+            # Build Bicep file (compiles to ARM JSON and runs linter)
+            # Exit on first error (|| exit 1)
+            bicep build "$file" || exit 1
+          done
+          echo "All Bicep files passed linting"
+
+      # Validate main Bicep template compiles successfully
+      # Bicep compilation: https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/bicep-cli#build
+      - name: Validate Bicep syntax
+        working-directory: demos/github-webapp-demo/bicep
+        run: |
+          echo "Validating main.bicep..."
+          # Compile Bicep to ARM JSON template
+          # --outfile: Specify output ARM template path
+          bicep build main.bicep --outfile main.json
+          echo "Bicep syntax validation passed"
+
+  # What-If Analysis job simulates deployment to preview changes
+  # Azure What-If: https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/deploy-what-if
+  what-if-analysis:
+    name: What-If Analysis
+    runs-on: ubuntu-latest
+    # Run after linting to avoid unnecessary Azure API calls
+    needs: lint-and-validate
+    # Matrix strategy runs job multiple times with different parameters
+    # Matrix strategy: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstrategymatrix
+    strategy:
+      matrix:
+        # Test deployment against all three environments
+        environment: [dev, qa, prod]
+      # Continue testing other environments even if one fails
+      # Fail-fast: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstrategyfail-fast
+      fail-fast: false
+    steps:
+      # Checkout repository code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Azure Login using OIDC
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Run What-If Analysis to preview deployment changes
+      # What-If shows: resources to be created, modified, deleted, or ignored
+      # Azure CLI what-if: https://learn.microsoft.com/en-us/cli/azure/deployment/sub#az-deployment-sub-what-if
+      - name: Run What-If Analysis
+        id: whatif
+        working-directory: demos/github-webapp-demo
+        run: |
+          echo "Running what-if analysis for ${{ matrix.environment }}..."
+          
+          # Execute what-if analysis at subscription level
+          # --result-format FullResourcePayloads: Detailed output with resource properties
+          # Output redirected to file for artifact upload
+          az deployment sub what-if \
+            --location eastus \
+            --template-file bicep/main.bicep \
+            --parameters parameters/${{ matrix.environment }}.bicepparam \
+            --parameters deployedBy="${{ github.actor }}" \
+            --parameters deployedDate="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --result-format FullResourcePayloads \
+            > whatif-${{ matrix.environment }}.txt
+          
+          echo "What-if analysis complete for ${{ matrix.environment }}"
+
+      # Upload What-If results as workflow artifacts
+      # Artifacts persist after workflow completion for review
+      # Artifacts: https://docs.github.com/en/actions/using-workflows/storing-workflow-data-as-artifacts
+      - name: Upload What-If Results
+        uses: actions/upload-artifact@v3
+        with:
+          name: whatif-results-${{ matrix.environment }}
+          path: demos/github-webapp-demo/whatif-${{ matrix.environment }}.txt
+
+  # Pester tests validate Bicep infrastructure using PowerShell testing framework
+  # Pester: https://pester.dev/docs/quick-start
+  # Infrastructure testing with Pester: https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/test-toolkit-overview
+  pester-tests:
+    name: Pester Tests
+    # Windows runner required for PowerShell and Pester
+    runs-on: windows-latest
+    # Run after linting completes
+    needs: lint-and-validate
+    steps:
+      # Checkout repository code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Install Pester testing framework
+      # Pester installation: https://pester.dev/docs/introduction/installation
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          # Install latest Pester module from PowerShell Gallery
+          # -Force: Skip confirmation prompts
+          # -SkipPublisherCheck: Skip publisher validation (trusted source)
+          # -Scope CurrentUser: Install for current user only (no admin required)
+          Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
+
+      # Execute Pester tests with detailed output
+      # Pester configuration: https://pester.dev/docs/usage/configuration
+      - name: Run Pester Tests
+        shell: pwsh
+        working-directory: demos/github-webapp-demo
+        run: |
+          Write-Host "Running Pester tests..."
+          # Create Pester configuration object
+          $config = New-PesterConfiguration
+          # Set test path to tests directory
+          $config.Run.Path = './tests'
+          # Enable detailed output for troubleshooting
+          $config.Output.Verbosity = 'Detailed'
+          # Enable test result XML export
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputPath = './tests/test-results.xml'
+          
+          # Execute tests and capture results
+          $result = Invoke-Pester -Configuration $config
+          
+          # Exit with error code if tests failed
+          if ($result.FailedCount -gt 0) {
+            Write-Error "$($result.FailedCount) test(s) failed"
+            exit 1
+          }
+          Write-Host "All tests passed successfully"
+
+      # Upload test results even if tests fail
+      # Conditional execution: https://docs.github.com/en/actions/learn-github-actions/expressions#status-check-functions
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: pester-test-results
+          path: demos/github-webapp-demo/tests/test-results.xml
+
+  # Summary job aggregates results and posts to pull request
+  # Provides centralized test results view
+  summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    # Run after all tests complete
+    needs: [lint-and-validate, what-if-analysis, pester-tests]
+    # Always run summary even if tests fail (to show failures)
+    if: always()
+    steps:
+      # Download all what-if artifacts for review
+      # Download artifacts: https://github.com/actions/download-artifact
+      - name: Download What-If Results
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      # Create markdown summary in GitHub Actions UI
+      # Job summaries: https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#adding-a-job-summary
+      - name: Create Summary
+        run: |
+          echo "## Unit Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          # Display status for each job using needs context
+          # Job result values: success, failure, cancelled, skipped
+          echo "### Lint and Validate: ${{ needs.lint-and-validate.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "### What-If Analysis: ${{ needs.what-if-analysis.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Pester Tests: ${{ needs.pester-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Check if all tests passed
+          if [ "${{ needs.lint-and-validate.result }}" == "success" ] && \
+             [ "${{ needs.what-if-analysis.result }}" == "success" ] && \
+             [ "${{ needs.pester-tests.result }}" == "success" ]; then
+            echo "### ✅ All tests passed!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Some tests failed. Please review the logs." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      # Post test results as pull request comment
+      # GitHub Script action: https://github.com/actions/github-script
+      # Octokit (GitHub API): https://octokit.github.io/rest.js/
+      - name: Comment PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Create formatted test results comment
+            const summary = `## Unit Test Results
+            
+            - **Lint and Validate**: ${{ needs.lint-and-validate.result }} 
+            - **What-If Analysis**: ${{ needs.what-if-analysis.result }}
+            - **Pester Tests**: ${{ needs.pester-tests.result }}
+            
+            // Check if all tests passed
+            ${( '${{ needs.lint-and-validate.result }}' === 'success' && 
+                '${{ needs.what-if-analysis.result }}' === 'success' && 
+                '${{ needs.pester-tests.result }}' === 'success' ) 
+              ? '### ✅ All tests passed! Ready to merge.' 
+              : '### ❌ Some tests failed. Please review the logs.'}
+            `;
+            
+            // Post comment to pull request
+            // GitHub REST API - Create issue comment: https://docs.github.com/en/rest/issues/comments#create-an-issue-comment
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });

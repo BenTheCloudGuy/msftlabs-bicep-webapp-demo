@@ -1,0 +1,611 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.30.23.60470",
+      "templateHash": "14391917794688894070"
+    },
+    "name": "Naming Module Tests",
+    "description": "Validates naming module outputs meet Azure naming requirements"
+  },
+  "parameters": {
+    "testEnvironment": {
+      "type": "string",
+      "defaultValue": "dev"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "[format('test-naming-{0}', uniqueString(deployment().name))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "regionAbbreviation": {
+            "value": "cus"
+          },
+          "environment": {
+            "value": "[parameters('testEnvironment')]"
+          },
+          "workloadName": {
+            "value": "webapp"
+          },
+          "uniqueSuffix": {
+            "value": "test1234"
+          },
+          "orgPrefix": {
+            "value": "test"
+          },
+          "instance": {
+            "value": 1
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.30.23.60470",
+              "templateHash": "17672082760994270427"
+            },
+            "name": "Naming Helper Module",
+            "description": "Generates standardized resource names following Azure Cloud Adoption Framework (CAF) naming conventions",
+            "owner": "BenTheBuilder",
+            "version": "1.0.0",
+            "references": [
+              "https://learn.microsoft.com/azure/cloud-adoption-framework/ready/azure-best-practices/resource-naming",
+              "https://learn.microsoft.com/azure/cloud-adoption-framework/ready/azure-best-practices/resource-abbreviations"
+            ]
+          },
+          "parameters": {
+            "regionAbbreviation": {
+              "type": "string",
+              "allowedValues": [
+                "eus",
+                "eus2",
+                "wus2",
+                "cus"
+              ],
+              "metadata": {
+                "description": "Required. Primary Azure region abbreviation for naming."
+              }
+            },
+            "environment": {
+              "type": "string",
+              "allowedValues": [
+                "dev",
+                "qa",
+                "prod"
+              ],
+              "metadata": {
+                "description": "Required. Environment identifier."
+              }
+            },
+            "workloadName": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 10,
+              "metadata": {
+                "description": "Required. Workload or application name."
+              }
+            },
+            "uniqueSuffix": {
+              "type": "string",
+              "defaultValue": "",
+              "maxLength": 13,
+              "metadata": {
+                "description": "Optional. Additional suffix for resource uniqueness (e.g., uniqueString)."
+              }
+            },
+            "orgPrefix": {
+              "type": "string",
+              "defaultValue": "",
+              "maxLength": 5,
+              "metadata": {
+                "description": "Optional. Organization or business unit abbreviation."
+              }
+            },
+            "instance": {
+              "type": "int",
+              "defaultValue": 1,
+              "minValue": 1,
+              "maxValue": 999,
+              "metadata": {
+                "description": "Optional. Instance number for resources that support multiple instances."
+              }
+            }
+          },
+          "variables": {
+            "instanceFormatted": "[padLeft(string(parameters('instance')), 3, '0')]",
+            "basePrefix": "[if(not(empty(parameters('orgPrefix'))), format('{0}-', parameters('orgPrefix')), '')]",
+            "baseName": "[if(not(empty(parameters('uniqueSuffix'))), format('{0}-{1}', parameters('workloadName'), parameters('uniqueSuffix')), parameters('workloadName'))]",
+            "regionMapping": {
+              "eus": "eastus",
+              "eus2": "eastus2",
+              "wus2": "westus2",
+              "cus": "centralus"
+            },
+            "resourceGroupGeneral": "[format('{0}rg-{1}-{2}-{3}', variables('basePrefix'), variables('regionMapping')[parameters('regionAbbreviation')], parameters('environment'), parameters('workloadName'))]",
+            "resourceGroupNetworking": "[format('{0}rg-{1}-{2}-{3}-networking', variables('basePrefix'), variables('regionMapping')[parameters('regionAbbreviation')], parameters('environment'), parameters('workloadName'))]",
+            "resourceGroupMgmt": "[format('{0}rg-{1}-prod-mgmt-common', variables('basePrefix'), variables('regionMapping')[parameters('regionAbbreviation')])]",
+            "resourceGroupMgmtNetworking": "[format('{0}rg-{1}-prod-mgmt-networking', variables('basePrefix'), variables('regionMapping')[parameters('regionAbbreviation')])]",
+            "virtualNetwork": "[format('{0}vnet-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'))]",
+            "virtualNetworkMgmt": "[format('{0}vnet-{1}-prod-mgmt', variables('basePrefix'), parameters('regionAbbreviation'))]",
+            "subnetPrivateEndpoints": "PrivateEndpoints",
+            "subnetAppServices": "AppServices",
+            "subnetBastion": "AzureBastionSubnet",
+            "subnetDevOpsRunners": "DevOpsRunners",
+            "subnetPublic": "Public",
+            "subnetGateway": "GatewaySubnet",
+            "networkSecurityGroup": "[format('{0}nsg-{1}-{2}-{3}-{4}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'), variables('instanceFormatted'))]",
+            "keyVault": "[take(format('{0}kv-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), variables('baseName')), 24)]",
+            "storageAccount": "[take(toLower(replace(format('{0}st{1}{2}{3}{4}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'), parameters('uniqueSuffix')), '-', '')), 24)]",
+            "appServicePlan": "[format('{0}asp-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'))]",
+            "webApp": "[format('{0}app-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), variables('baseName'))]",
+            "functionApp": "[format('{0}func-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), variables('baseName'))]",
+            "logAnalyticsWorkspace": "[format('{0}law-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'))]",
+            "applicationInsights": "[format('{0}appi-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'))]",
+            "virtualMachine": "[format('{0}vm-{1}-{2}-{3}-{4}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'), variables('instanceFormatted'))]",
+            "virtualMachineWindows": "[take(format('{0}vm{1}{2}{3}{4}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'), variables('instanceFormatted')), 15)]",
+            "networkInterface": "[format('{0}nic-{1}-{2}-{3}-{4}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'), variables('instanceFormatted'))]",
+            "publicIpAddress": "[format('{0}pip-{1}-{2}-{3}-{4}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'), variables('instanceFormatted'))]",
+            "loadBalancer": "[format('{0}lb-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'))]",
+            "applicationGateway": "[format('{0}agw-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'))]",
+            "privateEndpointKeyVault": "[format('{0}pe-{1}-{2}-{3}-kv', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'))]",
+            "privateEndpointStorage": "[format('{0}pe-{1}-{2}-{3}-st', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'))]",
+            "privateEndpointSql": "[format('{0}pe-{1}-{2}-{3}-sql', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'))]",
+            "privateDnsZoneKeyVault": "privatelink.vaultcore.azure.net",
+            "privateDnsZoneStorageBlob": "[format('privatelink.blob.{0}', environment().suffixes.storage)]",
+            "privateDnsZoneStorageFile": "[format('privatelink.file.{0}', environment().suffixes.storage)]",
+            "privateDnsZoneSql": "[format('privatelink{0}', environment().suffixes.sqlServerHostname)]",
+            "privateDnsZoneWebApp": "privatelink.azurewebsites.net",
+            "sqlServer": "[format('{0}sql-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), variables('baseName'))]",
+            "sqlDatabase": "[format('{0}sqldb-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'))]",
+            "containerRegistry": "[take(toLower(replace(format('{0}acr{1}{2}{3}{4}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'), parameters('uniqueSuffix')), '-', '')), 50)]",
+            "kubernetesCluster": "[format('{0}aks-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'))]",
+            "bastion": "[format('{0}bas-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'))]",
+            "managedIdentity": "[format('{0}id-{1}-{2}-{3}-{4}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'), variables('instanceFormatted'))]",
+            "cosmosDbAccount": "[take(format('{0}cosmos-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), variables('baseName')), 44)]",
+            "serviceBusNamespace": "[take(format('{0}sb-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), variables('baseName')), 50)]",
+            "eventHubNamespace": "[take(format('{0}evhns-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), variables('baseName')), 50)]",
+            "apiManagement": "[take(format('{0}apim-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), variables('baseName')), 50)]",
+            "redisCache": "[take(format('{0}redis-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), variables('baseName')), 63)]",
+            "frontDoor": "[format('{0}fd-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'))]",
+            "cdnProfile": "[format('{0}cdnp-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName'))]",
+            "recoveryServicesVault": "[take(format('{0}rsv-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName')), 50)]",
+            "automationAccount": "[take(format('{0}aa-{1}-{2}-{3}', variables('basePrefix'), parameters('regionAbbreviation'), parameters('environment'), parameters('workloadName')), 50)]"
+          },
+          "resources": [],
+          "outputs": {
+            "regionAbbreviation": {
+              "type": "string",
+              "metadata": {
+                "description": "The region abbreviation used for naming."
+              },
+              "value": "[parameters('regionAbbreviation')]"
+            },
+            "regionName": {
+              "type": "string",
+              "metadata": {
+                "description": "The full region name."
+              },
+              "value": "[variables('regionMapping')[parameters('regionAbbreviation')]]"
+            },
+            "environment": {
+              "type": "string",
+              "metadata": {
+                "description": "The environment identifier."
+              },
+              "value": "[parameters('environment')]"
+            },
+            "workloadName": {
+              "type": "string",
+              "metadata": {
+                "description": "The workload name."
+              },
+              "value": "[parameters('workloadName')]"
+            },
+            "uniqueSuffix": {
+              "type": "string",
+              "metadata": {
+                "description": "The unique suffix (if provided)."
+              },
+              "value": "[parameters('uniqueSuffix')]"
+            },
+            "instance": {
+              "type": "string",
+              "metadata": {
+                "description": "The formatted instance number."
+              },
+              "value": "[variables('instanceFormatted')]"
+            },
+            "resourceGroupGeneral": {
+              "type": "string",
+              "metadata": {
+                "description": "General resource group name."
+              },
+              "value": "[variables('resourceGroupGeneral')]"
+            },
+            "resourceGroupNetworking": {
+              "type": "string",
+              "metadata": {
+                "description": "Networking resource group name."
+              },
+              "value": "[variables('resourceGroupNetworking')]"
+            },
+            "resourceGroupMgmt": {
+              "type": "string",
+              "metadata": {
+                "description": "Management resource group name."
+              },
+              "value": "[variables('resourceGroupMgmt')]"
+            },
+            "resourceGroupMgmtNetworking": {
+              "type": "string",
+              "metadata": {
+                "description": "Management networking resource group name."
+              },
+              "value": "[variables('resourceGroupMgmtNetworking')]"
+            },
+            "virtualNetwork": {
+              "type": "string",
+              "metadata": {
+                "description": "Environment virtual network name."
+              },
+              "value": "[variables('virtualNetwork')]"
+            },
+            "virtualNetworkMgmt": {
+              "type": "string",
+              "metadata": {
+                "description": "Management virtual network name."
+              },
+              "value": "[variables('virtualNetworkMgmt')]"
+            },
+            "networkSecurityGroup": {
+              "type": "string",
+              "metadata": {
+                "description": "Network security group name."
+              },
+              "value": "[variables('networkSecurityGroup')]"
+            },
+            "networkInterface": {
+              "type": "string",
+              "metadata": {
+                "description": "Network interface name."
+              },
+              "value": "[variables('networkInterface')]"
+            },
+            "publicIpAddress": {
+              "type": "string",
+              "metadata": {
+                "description": "Public IP address name."
+              },
+              "value": "[variables('publicIpAddress')]"
+            },
+            "subnetPrivateEndpoints": {
+              "type": "string",
+              "metadata": {
+                "description": "Private endpoints subnet name."
+              },
+              "value": "[variables('subnetPrivateEndpoints')]"
+            },
+            "subnetAppServices": {
+              "type": "string",
+              "metadata": {
+                "description": "App Services subnet name."
+              },
+              "value": "[variables('subnetAppServices')]"
+            },
+            "subnetBastion": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure Bastion subnet name."
+              },
+              "value": "[variables('subnetBastion')]"
+            },
+            "subnetDevOpsRunners": {
+              "type": "string",
+              "metadata": {
+                "description": "DevOps runners subnet name."
+              },
+              "value": "[variables('subnetDevOpsRunners')]"
+            },
+            "subnetPublic": {
+              "type": "string",
+              "metadata": {
+                "description": "Public subnet name."
+              },
+              "value": "[variables('subnetPublic')]"
+            },
+            "subnetGateway": {
+              "type": "string",
+              "metadata": {
+                "description": "Gateway subnet name."
+              },
+              "value": "[variables('subnetGateway')]"
+            },
+            "keyVault": {
+              "type": "string",
+              "metadata": {
+                "description": "Key Vault name."
+              },
+              "value": "[variables('keyVault')]"
+            },
+            "managedIdentity": {
+              "type": "string",
+              "metadata": {
+                "description": "Managed identity name."
+              },
+              "value": "[variables('managedIdentity')]"
+            },
+            "storageAccount": {
+              "type": "string",
+              "metadata": {
+                "description": "Storage account name."
+              },
+              "value": "[variables('storageAccount')]"
+            },
+            "appServicePlan": {
+              "type": "string",
+              "metadata": {
+                "description": "App Service Plan name."
+              },
+              "value": "[variables('appServicePlan')]"
+            },
+            "webApp": {
+              "type": "string",
+              "metadata": {
+                "description": "Web App name."
+              },
+              "value": "[variables('webApp')]"
+            },
+            "functionApp": {
+              "type": "string",
+              "metadata": {
+                "description": "Function App name."
+              },
+              "value": "[variables('functionApp')]"
+            },
+            "virtualMachine": {
+              "type": "string",
+              "metadata": {
+                "description": "Virtual machine name (Linux)."
+              },
+              "value": "[variables('virtualMachine')]"
+            },
+            "virtualMachineWindows": {
+              "type": "string",
+              "metadata": {
+                "description": "Virtual machine name (Windows, 15 char limit)."
+              },
+              "value": "[variables('virtualMachineWindows')]"
+            },
+            "logAnalyticsWorkspace": {
+              "type": "string",
+              "metadata": {
+                "description": "Log Analytics Workspace name."
+              },
+              "value": "[variables('logAnalyticsWorkspace')]"
+            },
+            "applicationInsights": {
+              "type": "string",
+              "metadata": {
+                "description": "Application Insights name."
+              },
+              "value": "[variables('applicationInsights')]"
+            },
+            "applicationGateway": {
+              "type": "string",
+              "metadata": {
+                "description": "Application Gateway name."
+              },
+              "value": "[variables('applicationGateway')]"
+            },
+            "loadBalancer": {
+              "type": "string",
+              "metadata": {
+                "description": "Load Balancer name."
+              },
+              "value": "[variables('loadBalancer')]"
+            },
+            "bastion": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure Bastion name."
+              },
+              "value": "[variables('bastion')]"
+            },
+            "privateEndpointKeyVault": {
+              "type": "string",
+              "metadata": {
+                "description": "Key Vault private endpoint name."
+              },
+              "value": "[variables('privateEndpointKeyVault')]"
+            },
+            "privateEndpointStorage": {
+              "type": "string",
+              "metadata": {
+                "description": "Storage private endpoint name."
+              },
+              "value": "[variables('privateEndpointStorage')]"
+            },
+            "privateEndpointSql": {
+              "type": "string",
+              "metadata": {
+                "description": "SQL private endpoint name."
+              },
+              "value": "[variables('privateEndpointSql')]"
+            },
+            "privateDnsZoneKeyVault": {
+              "type": "string",
+              "metadata": {
+                "description": "Key Vault private DNS zone name."
+              },
+              "value": "[variables('privateDnsZoneKeyVault')]"
+            },
+            "privateDnsZoneStorageBlob": {
+              "type": "string",
+              "metadata": {
+                "description": "Storage Blob private DNS zone name."
+              },
+              "value": "[variables('privateDnsZoneStorageBlob')]"
+            },
+            "privateDnsZoneStorageFile": {
+              "type": "string",
+              "metadata": {
+                "description": "Storage File private DNS zone name."
+              },
+              "value": "[variables('privateDnsZoneStorageFile')]"
+            },
+            "privateDnsZoneSql": {
+              "type": "string",
+              "metadata": {
+                "description": "SQL private DNS zone name."
+              },
+              "value": "[variables('privateDnsZoneSql')]"
+            },
+            "privateDnsZoneWebApp": {
+              "type": "string",
+              "metadata": {
+                "description": "Web App private DNS zone name."
+              },
+              "value": "[variables('privateDnsZoneWebApp')]"
+            },
+            "sqlServer": {
+              "type": "string",
+              "metadata": {
+                "description": "SQL Server name."
+              },
+              "value": "[variables('sqlServer')]"
+            },
+            "sqlDatabase": {
+              "type": "string",
+              "metadata": {
+                "description": "SQL Database name."
+              },
+              "value": "[variables('sqlDatabase')]"
+            },
+            "cosmosDbAccount": {
+              "type": "string",
+              "metadata": {
+                "description": "Cosmos DB account name."
+              },
+              "value": "[variables('cosmosDbAccount')]"
+            },
+            "containerRegistry": {
+              "type": "string",
+              "metadata": {
+                "description": "Container Registry name."
+              },
+              "value": "[variables('containerRegistry')]"
+            },
+            "kubernetesCluster": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure Kubernetes Service cluster name."
+              },
+              "value": "[variables('kubernetesCluster')]"
+            },
+            "serviceBusNamespace": {
+              "type": "string",
+              "metadata": {
+                "description": "Service Bus namespace name."
+              },
+              "value": "[variables('serviceBusNamespace')]"
+            },
+            "eventHubNamespace": {
+              "type": "string",
+              "metadata": {
+                "description": "Event Hub namespace name."
+              },
+              "value": "[variables('eventHubNamespace')]"
+            },
+            "apiManagement": {
+              "type": "string",
+              "metadata": {
+                "description": "API Management service name."
+              },
+              "value": "[variables('apiManagement')]"
+            },
+            "redisCache": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure Cache for Redis name."
+              },
+              "value": "[variables('redisCache')]"
+            },
+            "frontDoor": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure Front Door name."
+              },
+              "value": "[variables('frontDoor')]"
+            },
+            "cdnProfile": {
+              "type": "string",
+              "metadata": {
+                "description": "CDN Profile name."
+              },
+              "value": "[variables('cdnProfile')]"
+            },
+            "recoveryServicesVault": {
+              "type": "string",
+              "metadata": {
+                "description": "Recovery Services Vault name."
+              },
+              "value": "[variables('recoveryServicesVault')]"
+            },
+            "automationAccount": {
+              "type": "string",
+              "metadata": {
+                "description": "Automation Account name."
+              },
+              "value": "[variables('automationAccount')]"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "testResults": {
+      "type": "object",
+      "value": {
+        "allTests": {
+          "storageAccountNameValid": "[and(and(lessOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value), 24), equals(toLower(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value), reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value)), not(contains(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value, '-')))]",
+          "keyVaultNameValid": "[and(lessOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.keyVault.value), 24), greaterOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.keyVault.value), 3))]",
+          "windowsVmNameValid": "[lessOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.virtualMachineWindows.value), 15)]",
+          "linuxVmNameValid": "[lessOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.virtualMachine.value), 64)]",
+          "containerRegistryNameValid": "[and(lessOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.containerRegistry.value), 50), not(contains(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.containerRegistry.value, '-')))]",
+          "resourceGroupHasFullRegion": "[contains(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.resourceGroupGeneral.value, 'centralus')]",
+          "allOutputsNonEmpty": "[and(and(and(not(empty(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.keyVault.value)), not(empty(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value))), not(empty(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.webApp.value))), not(empty(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.virtualMachine.value)))]"
+        },
+        "testStatus": "[if(and(and(and(and(and(and(and(and(lessOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value), 24), equals(toLower(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value), reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value)), not(contains(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value, '-'))), and(lessOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.keyVault.value), 24), greaterOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.keyVault.value), 3))), lessOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.virtualMachineWindows.value), 15)), lessOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.virtualMachine.value), 64)), and(lessOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.containerRegistry.value), 50), not(contains(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.containerRegistry.value, '-')))), contains(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.resourceGroupGeneral.value, 'centralus')), and(and(and(not(empty(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.keyVault.value)), not(empty(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value))), not(empty(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.webApp.value))), not(empty(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.virtualMachine.value)))), 'PASSED', 'FAILED')]"
+      }
+    },
+    "sampleNames": {
+      "type": "object",
+      "value": {
+        "storageAccount": "[format('{0} (len: {1})', reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value, length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value))]",
+        "keyVault": "[format('{0} (len: {1})', reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.keyVault.value, length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.keyVault.value))]",
+        "webApp": "[reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.webApp.value]",
+        "virtualMachine": "[reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.virtualMachine.value]",
+        "virtualMachineWindows": "[format('{0} (len: {1})', reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.virtualMachineWindows.value, length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.virtualMachineWindows.value))]",
+        "containerRegistry": "[format('{0} (len: {1})', reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.containerRegistry.value, length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.containerRegistry.value))]",
+        "resourceGroupGeneral": "[reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.resourceGroupGeneral.value]",
+        "resourceGroupNetworking": "[reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.resourceGroupNetworking.value]"
+      }
+    },
+    "validationSummary": {
+      "type": "string",
+      "value": "[if(and(and(and(and(and(and(and(and(lessOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value), 24), equals(toLower(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value), reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value)), not(contains(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value, '-'))), and(lessOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.keyVault.value), 24), greaterOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.keyVault.value), 3))), lessOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.virtualMachineWindows.value), 15)), lessOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.virtualMachine.value), 64)), and(lessOrEquals(length(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.containerRegistry.value), 50), not(contains(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.containerRegistry.value, '-')))), contains(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.resourceGroupGeneral.value, 'centralus')), and(and(and(not(empty(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.keyVault.value)), not(empty(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.storageAccount.value))), not(empty(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.webApp.value))), not(empty(reference(resourceId('Microsoft.Resources/deployments', format('test-naming-{0}', uniqueString(deployment().name))), '2022-09-01').outputs.virtualMachine.value)))), 'All naming validation tests PASSED', 'Some naming validation tests FAILED - review testResults output')]"
+    }
+  }
+}

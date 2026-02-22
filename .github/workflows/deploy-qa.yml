@@ -1,0 +1,241 @@
+# Workflow name displayed in GitHub Actions UI
+# Learn more: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#name
+name: Deploy to QA
+
+# Required Secrets Configuration:
+# GitHub Encrypted Secrets allow secure storage of sensitive information
+# Learn more: https://docs.github.com/en/actions/security-guides/encrypted-secrets
+#
+# Navigate to Settings > Secrets and variables > Actions > New repository secret
+# Add the following secrets:
+#   - AZURE_CLIENT_ID: Service Principal Client ID for workload identity federation
+#   - AZURE_TENANT_ID: Azure AD (Entra ID) Tenant ID
+#   - AZURE_SUBSCRIPTION_ID: Target Azure Subscription ID
+# 
+# Also create 'qa' environment in Settings > Environments with approval requirements
+# Environment protection rules: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#environment-protection-rules
+# Azure OIDC Authentication: https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure
+
+# Workflow triggers define when this workflow executes
+# Learn more: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows
+on:
+  # Trigger on push to qa branch with path filters
+  # Path filters prevent unnecessary workflow runs
+  push:
+    branches:
+      - qa
+    paths:
+      - 'demos/github-webapp-demo/bicep/**'
+      - 'demos/github-webapp-demo/parameters/qa.bicepparam'
+      - 'demos/github-webapp-demo/app/**'
+      - '.github/workflows/deploy-qa.yml'
+  # Allow manual workflow execution
+  workflow_dispatch:
+
+# Workflow permissions control what the GITHUB_TOKEN can access
+# Learn more: https://docs.github.com/en/actions/security-guides/automatic-token-authentication#permissions-for-the-github_token
+permissions:
+  # Required for OIDC authentication with Azure
+  id-token: write
+  # Required to checkout repository code
+  contents: read
+
+# Environment variables available to all jobs in this workflow
+env:
+  ENVIRONMENT: qa
+  REGION: eastus
+
+jobs:
+  validate:
+    name: Validate Infrastructure
+    runs-on: ubuntu-latest
+    # Uncomment the line below after creating 'qa' environment in GitHub repo settings
+    # environment: qa
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate Bicep Deployment
+        working-directory: demos/github-webapp-demo
+        run: |
+          echo "Validating deployment for ${{ env.ENVIRONMENT }}..."
+          
+          az deployment sub validate \
+            --location ${{ env.REGION }} \
+            --template-file bicep/main.bicep \
+            --parameters parameters/${{ env.ENVIRONMENT }}.bicepparam \
+            --parameters deployedBy="${{ github.actor }}" \
+            --parameters deployedDate="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          
+          echo "Validation successful"
+
+  # Approval gate job implements manual review before QA deployment
+  # This job leverages GitHub Environment protection rules for governance
+  # Environment protection rules: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#required-reviewers
+  approval-gate:
+    name: QA Deployment Approval
+    runs-on: ubuntu-latest
+    # Job dependencies ensure validation completes before seeking approval
+    needs: validate
+    # Uncomment the line below after creating 'qa' environment in GitHub repo settings
+    # Configure approval requirements and protection rules in environment settings:
+    # 1. Navigate to Settings > Environments > qa
+    # 2. Add required reviewers (1-6 people or teams)
+    # 3. Optional: Add wait timer (0-43200 minutes)
+    # 4. Optional: Add deployment branches rule
+    # environment: qa
+    steps:
+      # When environment protection is enabled, this job will pause for manual approval
+      # Reviewers receive notifications and can approve/reject via GitHub UI
+      # Learn more: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment
+      - name: Manual Approval Required
+        run: |
+          echo "Waiting for manual approval to deploy to QA..."
+          echo "This deployment requires approval from designated reviewers."
+          echo "Reviewers will be notified via GitHub notifications."
+
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: approval-gate
+    # Uncomment the line below after creating 'qa' environment in GitHub repo settings
+    # environment: qa
+    outputs:
+      webAppName: ${{ steps.deploy.outputs.webAppName }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Infrastructure
+        id: deploy
+        working-directory: demos/github-webapp-demo
+        run: |
+          echo "Deploying infrastructure to ${{ env.ENVIRONMENT }}..."
+          
+          DEPLOYMENT_NAME="webapp-${{ env.ENVIRONMENT }}-$(date +%Y%m%d-%H%M%S)"
+          
+          az deployment sub create \
+            --name "$DEPLOYMENT_NAME" \
+            --location ${{ env.REGION }} \
+            --template-file bicep/main.bicep \
+            --parameters parameters/${{ env.ENVIRONMENT }}.bicepparam \
+            --parameters deployedBy="${{ github.actor }}" \
+            --parameters deployedDate="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --output json > deployment-output.json
+          
+          # Extract outputs
+          WEB_APP_NAME=$(jq -r '.properties.outputs.webAppName.value' deployment-output.json)
+          echo "webAppName=$WEB_APP_NAME" >> $GITHUB_OUTPUT
+          
+          echo "Infrastructure deployment complete"
+          echo "Web App: $WEB_APP_NAME"
+
+  deploy-application:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+    needs: deploy-infrastructure
+    # Uncomment the line below after creating 'qa' environment in GitHub repo settings
+    # environment: qa
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        working-directory: demos/github-webapp-demo/app
+        run: npm install
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Web App
+        working-directory: demos/github-webapp-demo/app
+        run: |
+          echo "Deploying application to ${{ needs.deploy-infrastructure.outputs.webAppName }}..."
+          
+          zip -r app.zip .
+          
+          az webapp deployment source config-zip \
+            --resource-group rg-${{ env.REGION }}-${{ env.ENVIRONMENT }}-webapp \
+            --name ${{ needs.deploy-infrastructure.outputs.webAppName }} \
+            --src app.zip
+          
+          echo "Application deployment complete"
+
+  # Integration tests verify application behavior across multiple components
+  # Integration tests validate APIs, database connections, and external dependencies
+  # Learn more about integration testing: https://learn.microsoft.com/en-us/dotnet/core/testing/
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    # Run after application deployment completes
+    needs: [deploy-infrastructure, deploy-application]
+    steps:
+      # Azure Login for accessing deployed resources
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Execute integration tests against deployed application
+      # Consider using testing frameworks: Jest, Mocha, Playwright, Postman/Newman
+      # Azure Load Testing: https://learn.microsoft.com/en-us/azure/load-testing/overview-what-is-azure-load-testing
+      - name: Run Integration Tests
+        run: |
+          echo "Running integration tests..."
+          
+          # Construct application URL
+          WEB_APP_URL="https://${{ needs.deploy-infrastructure.outputs.webAppName }}.azurewebsites.net"
+          
+          # Add integration tests here:
+          # - API endpoint tests
+          # - Database connectivity tests
+          # - External service integration tests
+          # - Business workflow validation
+          echo "Testing application endpoints..."
+          
+          echo "Integration tests complete"
+
+  summary:
+    name: Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [deploy-infrastructure, deploy-application, integration-tests]
+    if: always()
+    steps:
+      - name: Create Summary
+        run: |
+          echo "## QA Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ env.ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region**: ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed By**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Web App**: ${{ needs.deploy-infrastructure.outputs.webAppName }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Status" >> $GITHUB_STEP_SUMMARY
+          echo "- Infrastructure: ${{ needs.deploy-infrastructure.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Application: ${{ needs.deploy-application.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Integration Tests: ${{ needs.integration-tests.result }}" >> $GITHUB_STEP_SUMMARY

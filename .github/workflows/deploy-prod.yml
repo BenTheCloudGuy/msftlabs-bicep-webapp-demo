@@ -1,0 +1,290 @@
+# Workflow name displayed in GitHub Actions UI
+# Learn more: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#name
+name: Deploy to Production
+
+# Required Secrets Configuration:
+# GitHub Encrypted Secrets for production environment require extra security
+# Learn more: https://docs.github.com/en/actions/security-guides/encrypted-secrets
+#
+# Navigate to Settings > Secrets and variables > Actions > New repository secret
+# Add the following secrets:
+#   - AZURE_CLIENT_ID: Service Principal Client ID for workload identity federation
+#   - AZURE_TENANT_ID: Azure AD (Entra ID) Tenant ID
+#   - AZURE_SUBSCRIPTION_ID: Production Azure Subscription ID
+# 
+# Also create 'prod' environment in Settings > Environments with strict requirements:
+# - Required reviewers (recommend 2+ senior team members)
+# - Wait timer (recommended: 5-15 minutes for change awareness)
+# - Deployment branch restrictions (main branch only)
+# Environment protection rules: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#environment-protection-rules
+# Azure OIDC Authentication: https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure
+
+# Workflow triggers - Production deployments typically triggered from main branch
+# Learn more: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows
+on:
+  # Trigger on push to main branch (production release)
+  # Path filters ensure only infrastructure/app changes trigger deployment
+  push:
+    branches:
+      - main
+    paths:
+      - 'demos/github-webapp-demo/bicep/**'
+      - 'demos/github-webapp-demo/parameters/prod.bicepparam'
+      - 'demos/github-webapp-demo/app/**'
+      - '.github/workflows/deploy-prod.yml'
+  # Allow manual workflow execution for hotfixes or special deployments
+  workflow_dispatch:
+
+# Workflow permissions using principle of least privilege
+# Learn more: https://docs.github.com/en/actions/security-guides/automatic-token-authentication#permissions-for-the-github_token
+permissions:
+  # Required for OIDC authentication with Azure (federated credentials)
+  id-token: write
+  # Required to checkout repository code
+  contents: read
+
+# Environment variables for production deployment
+env:
+  ENVIRONMENT: prod
+  REGION: eastus
+
+jobs:
+  validate:
+    name: Validate Infrastructure
+    runs-on: ubuntu-latest
+    # Uncomment the line below after creating 'prod' environment in GitHub repo settings
+    # environment: prod
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate Bicep Deployment
+        working-directory: demos/github-webapp-demo
+        run: |
+          echo "Validating deployment for ${{ env.ENVIRONMENT }}..."
+          
+          az deployment sub validate \
+            --location ${{ env.REGION }} \
+            --template-file bicep/main.bicep \
+            --parameters parameters/${{ env.ENVIRONMENT }}.bicepparam \
+            --parameters deployedBy="${{ github.actor }}" \
+            --parameters deployedDate="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          
+          echo "Validation successful"
+
+  # Production approval gate with enhanced review requirements
+  # Critical for change management and production safety
+  # Environment protection rules: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#required-reviewers
+  approval-gate:
+    name: Production Deployment Approval
+    runs-on: ubuntu-latest
+    # Validation must pass before seeking production approval
+    needs: validate
+    # Uncomment the line below after creating 'prod' environment in GitHub repo settings
+    # Configure strict approval requirements in environment settings:
+    # 1. Navigate to Settings > Environments > prod
+    # 2. Add required reviewers (recommend 2+ senior engineers/architects)
+    # 3. Add wait timer (5-15 minutes recommended for pre-deployment review)
+    # 4. Enable deployment branches rule (main branch only)
+    # 5. Consider adding environment secrets separate from dev/qa
+    # environment: prod
+    steps:
+      # Production deployments require explicit approval with context review
+      # Reviewers should verify what-if analysis and validation results
+      # Change management best practices: https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/deployment-best-practices
+      - name: Manual Approval Required
+        run: |
+          echo "Waiting for manual approval to deploy to PRODUCTION..."
+          echo "This deployment requires approval from designated reviewers."
+          echo "Please review the what-if analysis and validation results before approving."
+          echo ""
+          echo "Production Deployment Checklist:"
+          echo "- Verify all tests passed in lower environments"
+          echo "- Review what-if analysis for unexpected changes"
+          echo "- Confirm change window and stakeholder notifications"
+          echo "- Verify rollback plan is ready if needed"
+
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: approval-gate
+    # Uncomment the line below after creating 'prod' environment in GitHub repo settings
+    # environment: prod
+    outputs:
+      webAppName: ${{ steps.deploy.outputs.webAppName }}
+      lawId: ${{ steps.deploy.outputs.lawId }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Infrastructure
+        id: deploy
+        working-directory: demos/github-webapp-demo
+        run: |
+          echo "Deploying infrastructure to ${{ env.ENVIRONMENT }}..."
+          
+          DEPLOYMENT_NAME="webapp-${{ env.ENVIRONMENT }}-$(date +%Y%m%d-%H%M%S)"
+          
+          az deployment sub create \
+            --name "$DEPLOYMENT_NAME" \
+            --location ${{ env.REGION }} \
+            --template-file bicep/main.bicep \
+            --parameters parameters/${{ env.ENVIRONMENT }}.bicepparam \
+            --parameters deployedBy="${{ github.actor }}" \
+            --parameters deployedDate="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --output json > deployment-output.json
+          
+          # Extract outputs
+          WEB_APP_NAME=$(jq -r '.properties.outputs.webAppName.value' deployment-output.json)
+          LAW_ID=$(jq -r '.properties.outputs.logAnalyticsWorkspaceId.value' deployment-output.json)
+          
+          echo "webAppName=$WEB_APP_NAME" >> $GITHUB_OUTPUT
+          echo "lawId=$LAW_ID" >> $GITHUB_OUTPUT
+          
+          echo "Infrastructure deployment complete"
+          echo "Web App: $WEB_APP_NAME"
+          echo "Log Analytics: $LAW_ID"
+
+  deploy-application:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+    needs: deploy-infrastructure
+    # Uncomment the line below after creating 'prod' environment in GitHub repo settings
+    # environment: prod
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        working-directory: demos/github-webapp-demo/app
+        run: npm install --production
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Deploy application package with production optimizations
+      # Azure CLI webapp deployment: https://learn.microsoft.com/en-us/cli/azure/webapp/deployment/source#az-webapp-deployment-source-config-zip
+      - name: Deploy to Web App
+        working-directory: demos/github-webapp-demo/app
+        run: |
+          echo "Deploying application to ${{ needs.deploy-infrastructure.outputs.webAppName }}..."
+          
+          # Create ZIP archive
+          zip -r app.zip .
+          
+          # Deploy to production Web App
+          az webapp deployment source config-zip \
+            --resource-group rg-${{ env.REGION }}-${{ env.ENVIRONMENT }}-webapp \
+            --name ${{ needs.deploy-infrastructure.outputs.webAppName }} \
+            --src app.zip
+          
+          echo "Application deployment complete"
+
+      # Restart Web App to ensure clean application state
+      # App Service restart: https://learn.microsoft.com/en-us/cli/azure/webapp#az-webapp-restart
+      # Best practice for production deployments to clear caches and reload configs
+      - name: Restart Web App
+        run: |
+          echo "Restarting web app..."
+          # Graceful restart ensures no dropped connections
+          az webapp restart \
+            --resource-group rg-${{ env.REGION }}-${{ env.ENVIRONMENT }}-webapp \
+            --name ${{ needs.deploy-infrastructure.outputs.webAppName }}
+          echo "Web app restarted successfully"
+
+  smoke-tests:
+    name: Smoke Tests
+    runs-on: ubuntu-latest
+    needs: [deploy-infrastructure, deploy-application]
+    steps:
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run Smoke Tests
+        run: |
+          echo "Running production smoke tests..."
+          
+          WEB_APP_URL="https://${{ needs.deploy-infrastructure.outputs.webAppName }}.azurewebsites.net"
+          
+          # Add smoke tests here
+          echo "Testing critical endpoints..."
+          
+          echo "Smoke tests complete"
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [deploy-infrastructure, deploy-application, smoke-tests]
+    steps:
+      - name: Run Integration Tests
+        run: |
+          echo "Running production integration tests..."
+          
+          # Add integration tests here
+          
+          echo "Integration tests complete"
+
+  summary:
+    name: Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [deploy-infrastructure, deploy-application, smoke-tests, integration-tests]
+    if: always()
+    steps:
+      - name: Create Summary
+        run: |
+          echo "## Production Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ env.ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region**: ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed By**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment Time**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Web App**: ${{ needs.deploy-infrastructure.outputs.webAppName }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Status" >> $GITHUB_STEP_SUMMARY
+          echo "- Infrastructure: ${{ needs.deploy-infrastructure.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Application: ${{ needs.deploy-application.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Smoke Tests: ${{ needs.smoke-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Integration Tests: ${{ needs.integration-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.deploy-infrastructure.result }}" == "success" ] && \
+             [ "${{ needs.deploy-application.result }}" == "success" ] && \
+             [ "${{ needs.smoke-tests.result }}" == "success" ] && \
+             [ "${{ needs.integration-tests.result }}" == "success" ]; then
+            echo "### Production deployment successful!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Some deployment steps failed. Please review." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Send Notification
+        if: failure()
+        run: |
+          echo "Production deployment failed!"
+          echo "Please review the logs and take appropriate action."

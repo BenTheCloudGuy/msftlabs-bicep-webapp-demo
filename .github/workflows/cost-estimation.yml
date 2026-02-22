@@ -1,0 +1,333 @@
+# Workflow name displayed in GitHub Actions UI
+# Learn more: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#name
+name: Cost Estimation Gate
+
+# Workflow triggers - Runs on pull requests and manual execution
+# Provides cost visibility before merging infrastructure changes
+# Learn more: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows
+on:
+  # Trigger on pull requests to any protected branch
+  # Pull request events: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#pull_request
+  pull_request:
+    branches: [dev, qa, prod]
+    # Only run when infrastructure or parameter files change
+    paths:
+      - 'bicep/**'
+      - 'parameters/**'
+  # Allow manual execution with environment selection
+  # Workflow dispatch inputs: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#workflow_dispatch
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to estimate costs for'
+        required: true
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
+
+# Workflow permissions
+# Learn more: https://docs.github.com/en/actions/security-guides/automatic-token-authentication#permissions-for-the-github_token
+permissions:
+  # Required for OIDC authentication with Azure
+  id-token: write
+  # Required to checkout repository code
+  contents: read
+  # Required to comment cost estimates on pull requests
+  pull-requests: write
+
+# Environment variables
+env:
+  REGION: eastus
+
+# Jobs define the cost estimation pipeline
+# Azure Cost Management: https://learn.microsoft.com/en-us/azure/cost-management-billing/
+jobs:
+  # Estimate costs for infrastructure deployment
+  # Azure pricing: https://azure.microsoft.com/en-us/pricing/
+  estimate-costs:
+    name: Estimate Infrastructure Costs
+    runs-on: ubuntu-latest
+    # Dynamic matrix strategy based on trigger type
+    # Matrix strategy: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstrategymatrix
+    # GitHub Actions expressions: https://docs.github.com/en/actions/learn-github-actions/expressions
+    strategy:
+      matrix:
+        # For workflow_dispatch: Use selected environment from input
+        # For pull_request: Estimate costs for all environments
+        # fromJSON converts string to array for matrix processing
+        environment: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.environment)) || fromJSON('["dev", "qa", "prod"]') }}
+    steps:
+      # Checkout repository code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Azure Login using OIDC for secure authentication
+      # Azure OIDC: https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Run What-If Analysis to identify resources being deployed
+      # What-If shows resource changes without deploying
+      # Azure CLI what-if: https://learn.microsoft.com/en-us/cli/azure/deployment/sub#az-deployment-sub-what-if
+      - name: Run What-If Analysis with Cost Data
+        id: whatif
+        working-directory: .
+        run: |
+          echo "Running cost estimation for ${{ matrix.environment }}..."
+          
+          # Execute what-if with ResourceIdOnly format for efficient cost parsing
+          # --result-format ResourceIdOnly: Returns only resource IDs for cost estimation
+          az deployment sub what-if \
+            --location ${{ env.REGION }} \
+            --template-file bicep/main.bicep \
+            --parameters parameters/${{ matrix.environment }}.bicepparam \
+            --parameters deployedBy="${{ github.actor }}" \
+            --parameters deployedDate="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --result-format ResourceIdOnly \
+            > whatif-${{ matrix.environment }}.txt
+          
+          echo "What-if analysis complete"
+
+      # Calculate estimated monthly costs based on resource types
+      # Cost estimates are approximate and may vary based on region, usage, and Azure pricing changes
+      # Azure Pricing Calculator: https://azure.microsoft.com/en-us/pricing/calculator/
+      # Azure Pricing Documentation: https://learn.microsoft.com/en-us/azure/cost-management-billing/
+      - name: Estimate Monthly Costs
+        id: costs
+        run: |
+          # Parse what-if results and estimate costs based on resource types
+          echo "Estimating costs for ${{ matrix.environment }} environment..."
+          
+          # Initialize cost accumulation variables
+          TOTAL_COST=0
+          COST_BREAKDOWN=""
+          
+          # Cost estimates (monthly USD) - These are approximate baseline costs
+          # Adjust based on your actual SKUs, regions, and configurations
+          # Note: Costs vary by Azure region - eastus pricing used as baseline
+          
+          # Check for Azure App Service Plans in what-if output
+          # App Service pricing: https://azure.microsoft.com/en-us/pricing/details/app-service/windows/
+          if grep -q "Microsoft.Web/serverfarms" whatif-${{ matrix.environment }}.txt 2>/dev/null; then
+            # B1 (Basic) tier: 1 core, 1.75 GB RAM
+            APP_SERVICE_PLAN_COST=75
+            TOTAL_COST=$((TOTAL_COST + APP_SERVICE_PLAN_COST))
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- App Service Plan (B1): \$${APP_SERVICE_PLAN_COST}/month"
+          fi
+          
+          # Check for Azure Web Apps
+          # Web apps are included in App Service Plan cost
+          if grep -q "Microsoft.Web/sites" whatif-${{ matrix.environment }}.txt 2>/dev/null; then
+            WEB_APP_COST=0  # Included in App Service Plan
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- Web App: Included in plan"
+          fi
+          
+          # Check for Azure Key Vault
+          # Key Vault pricing: https://azure.microsoft.com/en-us/pricing/details/key-vault/
+          if grep -q "Microsoft.KeyVault/vaults" whatif-${{ matrix.environment }}.txt 2>/dev/null; then
+            # Standard tier: Per-operation pricing (~10,000 operations/month estimate)
+            KEY_VAULT_COST=5
+            TOTAL_COST=$((TOTAL_COST + KEY_VAULT_COST))
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- Key Vault: \$${KEY_VAULT_COST}/month (10k operations)"
+          fi
+          
+          # Check for Virtual Networks
+          # VNet pricing: https://azure.microsoft.com/en-us/pricing/details/virtual-network/
+          if grep -q "Microsoft.Network/virtualNetworks" whatif-${{ matrix.environment }}.txt 2>/dev/null; then
+            VNET_COST=0  # VNets are free, only data transfer costs apply
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- Virtual Network: Free (data transfer charges may apply)"
+          fi
+          
+          # Check for Private Endpoints
+          # Private Link pricing: https://azure.microsoft.com/en-us/pricing/details/private-link/
+          if grep -q "Microsoft.Network/privateEndpoints" whatif-${{ matrix.environment }}.txt 2>/dev/null; then
+            # Count private endpoints (grep -c counts occurrences)
+            PE_COUNT=$(grep -c "Microsoft.Network/privateEndpoints" whatif-${{ matrix.environment }}.txt || echo 0)
+            # $0.01/hour per private endpoint = ~$7.20/month, rounded to $10 with data transfer
+            PE_COST=$((PE_COUNT * 10))
+            TOTAL_COST=$((TOTAL_COST + PE_COST))
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- Private Endpoints (${PE_COUNT}): \$${PE_COST}/month"
+          fi
+          
+          # Check for Log Analytics Workspaces
+          # Log Analytics pricing: https://azure.microsoft.com/en-us/pricing/details/monitor/
+          if grep -q "Microsoft.OperationalInsights/workspaces" whatif-${{ matrix.environment }}.txt 2>/dev/null; then
+            # Pay-as-you-go: $2.30/GB after 5GB free tier (~5GB/day estimate)
+            LOG_ANALYTICS_COST=25
+            TOTAL_COST=$((TOTAL_COST + LOG_ANALYTICS_COST))
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- Log Analytics (5GB/day estimate): \$${LOG_ANALYTICS_COST}/month"
+          fi
+          
+          # Check for Virtual Machines
+          # VM pricing: https://azure.microsoft.com/en-us/pricing/details/virtual-machines/windows/
+          if grep -q "Microsoft.Compute/virtualMachines" whatif-${{ matrix.environment }}.txt 2>/dev/null; then
+            # B2s: 2 vCPUs, 4 GB RAM (~$0.0832/hour = $60/month)
+            VM_COST=60
+            TOTAL_COST=$((TOTAL_COST + VM_COST))
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- Virtual Machine (B2s): \$${VM_COST}/month"
+          fi
+          
+          # Check for Application Gateway
+          # Application Gateway pricing: https://azure.microsoft.com/en-us/pricing/details/application-gateway/
+          if grep -q "Microsoft.Network/applicationGateways" whatif-${{ matrix.environment }}.txt 2>/dev/null; then
+            # WAF_v2 tier: Fixed cost + data processing + outbound data
+            APP_GW_COST=245
+            TOTAL_COST=$((TOTAL_COST + APP_GW_COST))
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- Application Gateway (WAF_v2): \$${APP_GW_COST}/month"
+          fi
+          
+          # Set job outputs using GitHub Actions output syntax
+          # Output parameters: https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-output-parameter
+          echo "totalCost=$TOTAL_COST" >> $GITHUB_OUTPUT
+          # Multi-line output using heredoc syntax
+          echo "costBreakdown<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$COST_BREAKDOWN" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+          echo "Estimated monthly cost for ${{ matrix.environment }}: \$${TOTAL_COST} USD"
+
+      # Create or update cost estimate comment on pull request
+      # This provides cost visibility during code review process
+      # GitHub Script action: https://github.com/actions/github-script
+      - name: Create Cost Estimate Comment
+        # Only run on pull request events (not workflow_dispatch)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          # JavaScript code executed with GitHub API (Octokit) available as 'github'
+          # Octokit documentation: https://octokit.github.io/rest.js/
+          # GitHub Actions contexts: https://docs.github.com/en/actions/learn-github-actions/contexts
+          script: |
+            const environment = '${{ matrix.environment }}';
+            const totalCost = '${{ steps.costs.outputs.totalCost }}';
+            const costBreakdown = `${{ steps.costs.outputs.costBreakdown }}`;
+            
+            // Create formatted markdown comment with cost details and links
+            const comment = `## Cost Estimation for ${environment.toUpperCase()} Environment
+            
+            **Estimated Monthly Cost:** $${totalCost} USD
+            
+            ### Cost Breakdown:
+            ${costBreakdown}
+            
+            ---
+            
+            **Important Notes:**
+            - These are estimated costs based on standard pricing in eastus region
+            - Actual costs may vary based on:
+              - Usage patterns and traffic volume
+              - Data transfer and bandwidth consumption  
+              - Storage operations and capacity
+              - Additional features or services enabled
+            - Pricing is subject to change - verify at [Azure Pricing Calculator](https://azure.microsoft.com/pricing/calculator/)
+            
+            **Cost Optimization Tips:**
+            - Consider [Azure Reserved Instances](https://learn.microsoft.com/en-us/azure/cost-management-billing/reservations/save-compute-costs-reservations) for production (up to 72% savings)
+            - Enable auto-shutdown for non-production VMs
+            - Use [Azure Hybrid Benefit](https://azure.microsoft.com/pricing/hybrid-benefit/) if you have existing licenses
+            - Monitor spending with [Azure Cost Management](https://learn.microsoft.com/en-us/azure/cost-management-billing/)
+            - Review [Azure Well-Architected Framework - Cost Optimization](https://learn.microsoft.com/en-us/azure/architecture/framework/cost/)
+            `;
+            
+            // Find existing cost comment to update (avoids duplicate comments)
+            // GitHub REST API: List issue comments
+            // https://docs.github.com/en/rest/issues/comments#list-issue-comments
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            
+            // Look for existing comment from github-actions bot for this environment
+            const existingComment = comments.find(c => 
+              c.user.login === 'github-actions[bot]' && 
+              c.body.includes(`Cost Estimation for ${environment.toUpperCase()}`)
+            );
+            
+            // Update existing comment or create new one (prevents comment spam)
+            if (existingComment) {
+              // Update existing comment
+              // https://docs.github.com/en/rest/issues/comments#update-an-issue-comment
+              await github.rest.issues.updateComment({
+                comment_id: existingComment.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            } else {
+              // Create new comment
+              // https://docs.github.com/en/rest/issues/comments#create-an-issue-comment
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            }
+
+      # Create GitHub Actions job summary for visibility
+      # Job summaries: https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#adding-a-job-summary
+      - name: Create Summary
+        run: |
+          # Append markdown to GitHub Actions step summary
+          echo "## Cost Estimation Summary - ${{ matrix.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Estimated Monthly Cost:** \$${{ steps.costs.outputs.totalCost }} USD" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Cost Breakdown:" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.costs.outputs.costBreakdown }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Note: These are estimated costs. Actual costs may vary.*" >> $GITHUB_STEP_SUMMARY
+
+      # Upload what-if results as workflow artifacts for later review
+      # Artifacts: https://docs.github.com/en/actions/using-workflows/storing-workflow-data-as-artifacts
+      - name: Upload What-If Results
+        uses: actions/upload-artifact@v3
+        with:
+          name: cost-estimation-${{ matrix.environment }}
+          path: whatif-${{ matrix.environment }}.txt
+
+  # Overall summary job aggregates cost estimates across all environments
+  # Provides centralized visibility of infrastructure costs
+  summary:
+    name: Cost Summary
+    runs-on: ubuntu-latest
+    # Run after all cost estimation jobs complete
+    needs: estimate-costs
+    # Always run summary even if individual cost calculations fail
+    # Status check functions: https://docs.github.com/en/actions/learn-github-actions/expressions#status-check-functions
+    if: always()
+    steps:
+      # Download all cost estimation artifacts for review
+      # Download artifact action: https://github.com/actions/download-artifact
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          # Download all artifacts to artifacts directory
+          path: artifacts
+
+      # Create overall cost summary in GitHub Actions UI
+      # This provides a single view of all environment costs
+      - name: Create Overall Summary
+        run: |
+          echo "## Overall Cost Estimation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Cost estimations have been completed for all environments." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Review the cost estimates for each environment" >> $GITHUB_STEP_SUMMARY
+          echo "2. Verify the resource configurations match your requirements" >> $GITHUB_STEP_SUMMARY
+          echo "3. Consider cost optimization opportunities listed above" >> $GITHUB_STEP_SUMMARY
+          echo "4. Proceed with deployment if costs are acceptable" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Additional Resources:" >> $GITHUB_STEP_SUMMARY
+          echo "- [Azure Pricing Calculator](https://azure.microsoft.com/pricing/calculator/)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Azure Cost Management](https://learn.microsoft.com/en-us/azure/cost-management-billing/)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Azure Well-Architected - Cost Optimization](https://learn.microsoft.com/en-us/azure/architecture/framework/cost/)" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,29 @@
+# Ignore bicep parameter files (they reference main.bicep)
+parameters/*.bicepparam
+
+# Node modules
+app/node_modules/
+app/npm-debug.log*
+app/.env
+
+# Build outputs
+bicep/*.json
+!bicep/modules/**/*.json
+
+# Test results
+tests/test-results.xml
+tests/*.log
+
+# Deployment outputs
+deployment-output.json
+whatif-*.txt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
