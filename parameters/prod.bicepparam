@@ -10,3 +10,4 @@ param deploySelfHostedRunner = true
 param logAnalyticsWorkspaceId = ''  // Will be created during initial deployment, then reference existing
 param vmAdminUsername = 'adminuser'
 param keyVaultName = 'kv-mgmt-prod-secrets'
+param deploymentName = 'msftlabs-webapp-demo-prod-deployment'

@@ -67,12 +67,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Extract Region from Parameters
-        id: get-region
+      - name: Extract Parameters from Bicep Params File
+        id: get-params
         run: |
           REGION=$(grep "param primaryRegion" parameters/${{ env.ENVIRONMENT }}.bicepparam | sed "s/.*= '\(.*\)'/\1/")
+          DEPLOYMENT_NAME=$(grep "param deploymentName" parameters/${{ env.ENVIRONMENT }}.bicepparam | sed "s/.*= '\(.*\)'/\1/")
           echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "deploymentName=$DEPLOYMENT_NAME" >> $GITHUB_OUTPUT
           echo "Extracted region: $REGION"
+          echo "Extracted deployment name: $DEPLOYMENT_NAME"
 
       # Azure Login using OpenID Connect (OIDC) for secure, passwordless authentication
       # No client secrets needed - uses federated identity credentials
@@ -93,16 +96,9 @@ jobs:
         run: |
           echo "Validating deployment for ${{ env.ENVIRONMENT }}..."
           
-          # Validate subscription-level deployment
-          # --name: Unique validation deployment name to avoid conflicts
-          # --location: Azure region for deployment metadata
-          # --template-file: Path to main Bicep template
-          # --parameters: Bicep parameter file and inline parameter overrides
-          VALIDATION_NAME="webapp-${{ env.ENVIRONMENT }}-validate-$(date +%Y%m%d-%H%M%S)"
-          
           az deployment sub validate \
-            --name "$VALIDATION_NAME" \
-            --location ${{ steps.get-region.outputs.region }} \
+            --name "${{ steps.get-params.outputs.deploymentName }}" \
+            --location ${{ steps.get-params.outputs.region }} \
             --template-file bicep/main.bicep \
             --parameters parameters/${{ env.ENVIRONMENT }}.bicepparam \
             --parameters deployedBy="${{ github.actor }}" \
@@ -119,7 +115,8 @@ jobs:
           echo "Running what-if analysis for ${{ env.ENVIRONMENT }}..."
           
           az deployment sub what-if \
-            --location ${{ steps.get-region.outputs.region }} \
+            --name "${{ steps.get-params.outputs.deploymentName }}" \
+            --location ${{ steps.get-params.outputs.region }} \
             --template-file bicep/main.bicep \
             --parameters parameters/${{ env.ENVIRONMENT }}.bicepparam \
             --parameters deployedBy="${{ github.actor }}" \
@@ -282,16 +279,13 @@ jobs:
         run: |
           echo "Deploying infrastructure to ${{ env.ENVIRONMENT }}..."
           
-          # Create unique deployment name with timestamp for tracking
-          DEPLOYMENT_NAME="webapp-${{ env.ENVIRONMENT }}-$(date +%Y%m%d-%H%M%S)"
-          
           # Execute subscription-level deployment
           # --name: Unique name for deployment tracking in Azure Portal
           # --output json: Return deployment results as JSON
           # Date command generates ISO 8601 timestamp: https://www.gnu.org/software/coreutils/manual/html_node/date-invocation.html
           az deployment sub create \
-            --name "$DEPLOYMENT_NAME" \
-            --location ${{ steps.get-region.outputs.region }} \
+            --name "${{ steps.get-params.outputs.deploymentName }}" \
+            --location ${{ steps.get-params.outputs.region }} \
             --template-file bicep/main.bicep \
             --parameters parameters/${{ env.ENVIRONMENT }}.bicepparam \
             --parameters deployedBy="${{ github.actor }}" \
@@ -319,8 +313,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Extract Region from Parameters
-        id: get-region
+      - name: Extract Parameters from Bicep Params File
+        id: get-params
         run: |
           REGION=$(grep "param primaryRegion" parameters/${{ env.ENVIRONMENT }}.bicepparam | sed "s/.*= '\(.*\)'/\1/")
           echo "region=$REGION" >> $GITHUB_OUTPUT
@@ -367,7 +361,7 @@ jobs:
           # --name: Target Web App name from previous job output
           # --src: Path to ZIP file
           az webapp deployment source config-zip \
-            --resource-group rg-${{ steps.get-region.outputs.region }}-${{ env.ENVIRONMENT }}-webapp \
+            --resource-group rg-${{ steps.get-params.outputs.region }}-${{ env.ENVIRONMENT }}-webapp \
             --name ${{ needs.deploy-infrastructure.outputs.webAppName }} \
             --src app.zip
           
@@ -421,8 +415,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Extract Region from Parameters
-        id: get-region
+      - name: Extract Parameters from Bicep Params File
+        id: get-params
         run: |
           REGION=$(grep "param primaryRegion" parameters/${{ env.ENVIRONMENT }}.bicepparam | sed "s/.*= '\(.*\)'/\1/")
           echo "region=$REGION" >> $GITHUB_OUTPUT
@@ -436,7 +430,7 @@ jobs:
           echo "## Development Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Environment**: ${{ env.ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Region**: ${{ steps.get-region.outputs.region }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region**: ${{ steps.get-params.outputs.region }}" >> $GITHUB_STEP_SUMMARY
           # github.actor provides the username that triggered the workflow
           # GitHub contexts: https://docs.github.com/en/actions/learn-github-actions/contexts#github-context
           echo "- **Deployed By**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY

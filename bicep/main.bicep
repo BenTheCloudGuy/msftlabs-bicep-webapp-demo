@@ -56,6 +56,9 @@ param vmAdminUsername string = ''
 @description('Optional. Key Vault name where VM admin password is stored. Required if deploying self-hosted runner.')
 param keyVaultName string = ''
 
+@description('Deployment name for the environment resources. If not provided, a unique name will be generated.')
+param deploymentName string = ''!
+
 // ============ //
 // Variables    //
 // ============ //
@@ -65,6 +68,7 @@ var commonTags = {
   Environment: environment
   DeployedDate: deployedDate
   DeployedBy: deployedBy
+  DeploymentName: deploymentName
   Platform: 'DemoApp'
   Notes: 'This is a DemoApp PoC - short lived!'
 }
