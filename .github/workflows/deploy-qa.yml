@@ -73,7 +73,11 @@ jobs:
         run: |
           echo "Validating deployment for ${{ env.ENVIRONMENT }}..."
           
+          # Create unique validation deployment name to avoid conflicts with existing deployments
+          VALIDATION_NAME="webapp-${{ env.ENVIRONMENT }}-validate-$(date +%Y%m%d-%H%M%S)"
+          
           az deployment sub validate \
+            --name "$VALIDATION_NAME" \
             --location ${{ steps.get-region.outputs.region }} \
             --template-file bicep/main.bicep \
             --parameters parameters/${{ env.ENVIRONMENT }}.bicepparam \

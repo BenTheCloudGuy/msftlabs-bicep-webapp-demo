@@ -94,10 +94,14 @@ jobs:
           echo "Validating deployment for ${{ env.ENVIRONMENT }}..."
           
           # Validate subscription-level deployment
+          # --name: Unique validation deployment name to avoid conflicts
           # --location: Azure region for deployment metadata
           # --template-file: Path to main Bicep template
           # --parameters: Bicep parameter file and inline parameter overrides
+          VALIDATION_NAME="webapp-${{ env.ENVIRONMENT }}-validate-$(date +%Y%m%d-%H%M%S)"
+          
           az deployment sub validate \
+            --name "$VALIDATION_NAME" \
             --location ${{ steps.get-region.outputs.region }} \
             --template-file bicep/main.bicep \
             --parameters parameters/${{ env.ENVIRONMENT }}.bicepparam \
