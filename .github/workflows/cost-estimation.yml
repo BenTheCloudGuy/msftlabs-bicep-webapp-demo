@@ -38,8 +38,7 @@ permissions:
   pull-requests: write
 
 # Environment variables
-env:
-  REGION: eastus2
+# (Region is dynamically extracted from parameter files per environment)
 
 # Jobs define the cost estimation pipeline
 # Azure Cost Management: https://learn.microsoft.com/en-us/azure/cost-management-billing/
@@ -63,6 +62,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Extract Region from Parameters
+        id: get-region
+        run: |
+          REGION=$(grep "param primaryRegion" parameters/${{ matrix.environment }}.bicepparam | sed "s/.*= '\(.*\)'/\1/")
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "Extracted region: $REGION for ${{ matrix.environment }}"
+
       # Azure Login using OIDC for secure authentication
       # Azure OIDC: https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure
       - name: Azure Login
@@ -84,7 +90,7 @@ jobs:
           # Execute what-if with ResourceIdOnly format for efficient cost parsing
           # --result-format ResourceIdOnly: Returns only resource IDs for cost estimation
           az deployment sub what-if \
-            --location ${{ env.REGION }} \
+            --location ${{ steps.get-region.outputs.region }} \
             --template-file bicep/main.bicep \
             --parameters parameters/${{ matrix.environment }}.bicepparam \
             --parameters deployedBy="${{ github.actor }}" \

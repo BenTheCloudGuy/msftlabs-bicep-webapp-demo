@@ -118,6 +118,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Extract Region from Parameters
+        id: get-region
+        run: |
+          REGION=$(grep "param primaryRegion" parameters/${{ matrix.environment }}.bicepparam | sed "s/.*= '\(.*\)'/\1/")
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "Extracted region: $REGION for ${{ matrix.environment }}"
+
       # Azure Login using OIDC
       - name: Azure Login
         uses: azure/login@v1
@@ -139,7 +146,7 @@ jobs:
           # --result-format FullResourcePayloads: Detailed output with resource properties
           # Output redirected to file for artifact upload
           az deployment sub what-if \
-            --location eastus \
+            --location ${{ steps.get-region.outputs.region }} \
             --template-file bicep/main.bicep \
             --parameters parameters/${{ matrix.environment }}.bicepparam \
             --parameters deployedBy="${{ github.actor }}" \

@@ -43,7 +43,6 @@ permissions:
 # Environment variables available to all jobs in this workflow
 env:
   ENVIRONMENT: qa
-  REGION: eastus2
 
 jobs:
   validate:
@@ -54,6 +53,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Extract Region from Parameters
+        id: get-region
+        run: |
+          REGION=$(grep "param primaryRegion" parameters/${{ env.ENVIRONMENT }}.bicepparam | sed "s/.*= '\(.*\)'/\1/")
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "Extracted region: $REGION"
 
       - name: Azure Login
         uses: azure/login@v1
@@ -68,7 +74,7 @@ jobs:
           echo "Validating deployment for ${{ env.ENVIRONMENT }}..."
           
           az deployment sub validate \
-            --location ${{ env.REGION }} \
+            --location ${{ steps.get-region.outputs.region }} \
             --template-file bicep/main.bicep \
             --parameters parameters/${{ env.ENVIRONMENT }}.bicepparam \
             --parameters deployedBy="${{ github.actor }}" \
@@ -113,6 +119,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Extract Region from Parameters
+        id: get-region
+        run: |
+          REGION=$(grep "param primaryRegion" parameters/${{ env.ENVIRONMENT }}.bicepparam | sed "s/.*= '\(.*\)'/\1/")
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "Extracted region: $REGION"
+
       - name: Azure Login
         uses: azure/login@v1
         with:
@@ -130,7 +143,7 @@ jobs:
           
           az deployment sub create \
             --name "$DEPLOYMENT_NAME" \
-            --location ${{ env.REGION }} \
+            --location ${{ steps.get-region.outputs.region }} \
             --template-file bicep/main.bicep \
             --parameters parameters/${{ env.ENVIRONMENT }}.bicepparam \
             --parameters deployedBy="${{ github.actor }}" \
@@ -153,6 +166,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Extract Region from Parameters
+        id: get-region
+        run: |
+          REGION=$(grep "param primaryRegion" parameters/${{ env.ENVIRONMENT }}.bicepparam | sed "s/.*= '\(.*\)'/\1/")
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "Extracted region: $REGION"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -178,7 +198,7 @@ jobs:
           zip -r app.zip .
           
           az webapp deployment source config-zip \
-            --resource-group rg-${{ env.REGION }}-${{ env.ENVIRONMENT }}-webapp \
+            --resource-group rg-${{ steps.get-region.outputs.region }}-${{ env.ENVIRONMENT }}-webapp \
             --name ${{ needs.deploy-infrastructure.outputs.webAppName }} \
             --src app.zip
           
@@ -226,12 +246,22 @@ jobs:
     needs: [deploy-infrastructure, deploy-application, integration-tests]
     if: always()
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract Region from Parameters
+        id: get-region
+        run: |
+          REGION=$(grep "param primaryRegion" parameters/${{ env.ENVIRONMENT }}.bicepparam | sed "s/.*= '\(.*\)'/\1/")
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "Extracted region: $REGION"
+
       - name: Create Summary
         run: |
           echo "## QA Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Environment**: ${{ env.ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Region**: ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region**: ${{ steps.get-region.outputs.region }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Deployed By**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Web App**: ${{ needs.deploy-infrastructure.outputs.webAppName }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

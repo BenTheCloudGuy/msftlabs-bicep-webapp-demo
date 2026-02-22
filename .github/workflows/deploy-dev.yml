@@ -46,7 +46,6 @@ permissions:
 # Learn more: https://docs.github.com/en/actions/learn-github-actions/variables#defining-environment-variables-for-a-single-workflow
 env:
   ENVIRONMENT: dev
-  REGION: eastus2
 
 # Jobs define the work to be done in this workflow
 # Jobs run in parallel by default unless dependencies are specified with 'needs'
@@ -67,6 +66,13 @@ jobs:
       # Learn more: https://github.com/actions/checkout
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Extract Region from Parameters
+        id: get-region
+        run: |
+          REGION=$(grep "param primaryRegion" parameters/${{ env.ENVIRONMENT }}.bicepparam | sed "s/.*= '\(.*\)'/\1/")
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "Extracted region: $REGION"
 
       # Azure Login using OpenID Connect (OIDC) for secure, passwordless authentication
       # No client secrets needed - uses federated identity credentials
@@ -92,7 +98,7 @@ jobs:
           # --template-file: Path to main Bicep template
           # --parameters: Bicep parameter file and inline parameter overrides
           az deployment sub validate \
-            --location ${{ env.REGION }} \
+            --location ${{ steps.get-region.outputs.region }} \
             --template-file bicep/main.bicep \
             --parameters parameters/${{ env.ENVIRONMENT }}.bicepparam \
             --parameters deployedBy="${{ github.actor }}" \
@@ -116,6 +122,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Extract Region from Parameters
+        id: get-region
+        run: |
+          REGION=$(grep "param primaryRegion" parameters/${{ env.ENVIRONMENT }}.bicepparam | sed "s/.*= '\(.*\)'/\1/")
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "Extracted region: $REGION"
 
       # Azure Login using OIDC for secure authentication
       - name: Azure Login
@@ -143,7 +156,7 @@ jobs:
           # Date command generates ISO 8601 timestamp: https://www.gnu.org/software/coreutils/manual/html_node/date-invocation.html
           az deployment sub create \
             --name "$DEPLOYMENT_NAME" \
-            --location ${{ env.REGION }} \
+            --location ${{ steps.get-region.outputs.region }} \
             --template-file bicep/main.bicep \
             --parameters parameters/${{ env.ENVIRONMENT }}.bicepparam \
             --parameters deployedBy="${{ github.actor }}" \
@@ -170,6 +183,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Extract Region from Parameters
+        id: get-region
+        run: |
+          REGION=$(grep "param primaryRegion" parameters/${{ env.ENVIRONMENT }}.bicepparam | sed "s/.*= '\(.*\)'/\1/")
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "Extracted region: $REGION"
 
       # Setup Node.js environment for building/packaging application
       # Learn more: https://github.com/actions/setup-node
@@ -212,7 +232,7 @@ jobs:
           # --name: Target Web App name from previous job output
           # --src: Path to ZIP file
           az webapp deployment source config-zip \
-            --resource-group rg-${{ env.REGION }}-${{ env.ENVIRONMENT }}-webapp \
+            --resource-group rg-${{ steps.get-region.outputs.region }}-${{ env.ENVIRONMENT }}-webapp \
             --name ${{ needs.deploy-infrastructure.outputs.webAppName }} \
             --src app.zip
           
@@ -263,6 +283,16 @@ jobs:
     # Conditional execution: https://docs.github.com/en/actions/learn-github-actions/expressions#status-check-functions
     if: always()
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract Region from Parameters
+        id: get-region
+        run: |
+          REGION=$(grep "param primaryRegion" parameters/${{ env.ENVIRONMENT }}.bicepparam | sed "s/.*= '\(.*\)'/\1/")
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "Extracted region: $REGION"
+
       # Create markdown summary in GitHub Actions UI
       # GITHUB_STEP_SUMMARY environment file: https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#adding-a-job-summary
       - name: Create Summary
@@ -271,7 +301,7 @@ jobs:
           echo "## Development Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Environment**: ${{ env.ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Region**: ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region**: ${{ steps.get-region.outputs.region }}" >> $GITHUB_STEP_SUMMARY
           # github.actor provides the username that triggered the workflow
           # GitHub contexts: https://docs.github.com/en/actions/learn-github-actions/contexts#github-context
           echo "- **Deployed By**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
