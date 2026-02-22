@@ -25,9 +25,9 @@ on:
     branches:
       - dev
     paths:
-      - 'demos/github-webapp-demo/bicep/**'
-      - 'demos/github-webapp-demo/parameters/dev.bicepparam'
-      - 'demos/github-webapp-demo/app/**'
+      - 'bicep/**'
+      - 'parameters/dev.bicepparam'
+      - 'app/**'
       - '.github/workflows/deploy-dev.yml'
   # Allow manual workflow execution from GitHub Actions UI
   # Learn more: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#workflow_dispatch
@@ -89,7 +89,7 @@ jobs:
       # Azure CLI deployment validate: https://learn.microsoft.com/en-us/cli/azure/deployment/sub#az-deployment-sub-validate
       # Bicep deployment commands: https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/deploy-cli
       - name: Validate Bicep Deployment
-        working-directory: demos/github-webapp-demo
+        working-directory: .
         run: |
           echo "Validating deployment for ${{ env.ENVIRONMENT }}..."
           
@@ -143,7 +143,7 @@ jobs:
       # Bicep deployment guide: https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/deploy-cli
       - name: Deploy Infrastructure
         id: deploy
-        working-directory: demos/github-webapp-demo
+        working-directory: .
         run: |
           echo "Deploying infrastructure to ${{ env.ENVIRONMENT }}..."
           
@@ -202,7 +202,7 @@ jobs:
       # Install npm dependencies defined in package.json
       # npm install documentation: https://docs.npmjs.com/cli/v9/commands/npm-install
       - name: Install dependencies
-        working-directory: demos/github-webapp-demo/app
+        working-directory: app
         run: npm install
 
       # Azure Login for deployment operations
@@ -218,7 +218,7 @@ jobs:
       # Azure CLI webapp deployment: https://learn.microsoft.com/en-us/cli/azure/webapp/deployment/source#az-webapp-deployment-source-config-zip
       # ZIP Deploy guide: https://learn.microsoft.com/en-us/azure/app-service/deploy-zip
       - name: Deploy to Web App
-        working-directory: demos/github-webapp-demo/app
+        working-directory: app
         run: |
           # Access output from previous job using needs context
           # Learn more: https://docs.github.com/en/actions/learn-github-actions/contexts#needs-context

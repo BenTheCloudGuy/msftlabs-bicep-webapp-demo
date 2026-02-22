@@ -25,9 +25,9 @@ on:
       - qa
     # Path filters ensure tests run only when relevant files change
     paths:
-      - 'demos/github-webapp-demo/bicep/**'
-      - 'demos/github-webapp-demo/parameters/**'
-      - 'demos/github-webapp-demo/tests/**'
+      - 'bicep/**'
+      - 'parameters/**'
+      - 'tests/**'
       - '.github/workflows/unit-tests.yml'
   # Allow manual workflow execution for ad-hoc testing
   workflow_dispatch:
@@ -73,7 +73,7 @@ jobs:
       # Lint all Bicep files in the bicep directory
       # Bicep build command: https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/bicep-cli#build
       - name: Lint Bicep files
-        working-directory: demos/github-webapp-demo/bicep
+        working-directory: bicep
         run: |
           echo "Linting Bicep files..."
           # Loop through all .bicep files and validate each one
@@ -89,7 +89,7 @@ jobs:
       # Validate main Bicep template compiles successfully
       # Bicep compilation: https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/bicep-cli#build
       - name: Validate Bicep syntax
-        working-directory: demos/github-webapp-demo/bicep
+        working-directory: bicep
         run: |
           echo "Validating main.bicep..."
           # Compile Bicep to ARM JSON template
@@ -138,7 +138,7 @@ jobs:
       # Azure CLI what-if: https://learn.microsoft.com/en-us/cli/azure/deployment/sub#az-deployment-sub-what-if
       - name: Run What-If Analysis
         id: whatif
-        working-directory: demos/github-webapp-demo
+        working-directory: .
         run: |
           echo "Running what-if analysis for ${{ matrix.environment }}..."
           
@@ -160,10 +160,10 @@ jobs:
       # Artifacts persist after workflow completion for review
       # Artifacts: https://docs.github.com/en/actions/using-workflows/storing-workflow-data-as-artifacts
       - name: Upload What-If Results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: whatif-results-${{ matrix.environment }}
-          path: demos/github-webapp-demo/whatif-${{ matrix.environment }}.txt
+          path: whatif-${{ matrix.environment }}.txt
 
   # Pester tests validate Bicep infrastructure using PowerShell testing framework
   # Pester: https://pester.dev/docs/quick-start
@@ -194,7 +194,7 @@ jobs:
       # Pester configuration: https://pester.dev/docs/usage/configuration
       - name: Run Pester Tests
         shell: pwsh
-        working-directory: demos/github-webapp-demo
+        working-directory: .
         run: |
           Write-Host "Running Pester tests..."
           # Create Pester configuration object
@@ -221,10 +221,10 @@ jobs:
       # Conditional execution: https://docs.github.com/en/actions/learn-github-actions/expressions#status-check-functions
       - name: Upload Test Results
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: pester-test-results
-          path: demos/github-webapp-demo/tests/test-results.xml
+          path: tests/test-results.xml
 
   # Summary job aggregates results and posts to pull request
   # Provides centralized test results view
