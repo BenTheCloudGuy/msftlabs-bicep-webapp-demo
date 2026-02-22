@@ -39,7 +39,7 @@ permissions:
 
 # Environment variables
 env:
-  REGION: eastus
+  REGION: eastus2
 
 # Jobs define the cost estimation pipeline
 # Azure Cost Management: https://learn.microsoft.com/en-us/azure/cost-management-billing/

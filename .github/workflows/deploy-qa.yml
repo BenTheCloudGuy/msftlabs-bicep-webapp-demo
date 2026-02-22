@@ -43,7 +43,7 @@ permissions:
 # Environment variables available to all jobs in this workflow
 env:
   ENVIRONMENT: qa
-  REGION: eastus
+  REGION: eastus2
 
 jobs:
   validate:

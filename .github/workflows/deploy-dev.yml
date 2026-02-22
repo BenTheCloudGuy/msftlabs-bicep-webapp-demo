@@ -46,7 +46,7 @@ permissions:
 # Learn more: https://docs.github.com/en/actions/learn-github-actions/variables#defining-environment-variables-for-a-single-workflow
 env:
   ENVIRONMENT: dev
-  REGION: eastus
+  REGION: eastus2
 
 # Jobs define the work to be done in this workflow
 # Jobs run in parallel by default unless dependencies are specified with 'needs'

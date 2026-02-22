@@ -46,7 +46,7 @@ permissions:
 # Environment variables for production deployment
 env:
   ENVIRONMENT: prod
-  REGION: eastus
+  REGION: eastus2
 
 jobs:
   validate:
