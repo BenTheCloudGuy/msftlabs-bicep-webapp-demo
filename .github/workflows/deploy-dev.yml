@@ -53,14 +53,14 @@ env:
 jobs:
   # Validation job ensures Bicep templates are valid before deployment
   validate:
-    name: Validate Infrastructure
+    name: Validate Infrastructure & Estimate Costs
     # Runner specifies the VM image to execute the job
     # Learn more: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idruns-on
     runs-on: ubuntu-latest
-    # Environment provides deployment protection rules, secrets, and variables
-    # Uncomment the line below after creating 'dev' environment in GitHub repo settings
-    # Learn more: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment
-    # environment: dev
+    # Job outputs for cost estimation data
+    outputs:
+      totalCost: ${{ steps.costs.outputs.totalCost }}
+      costBreakdown: ${{ steps.costs.outputs.costBreakdown }}
     steps:
       # Checkout action clones repository code to the runner
       # Learn more: https://github.com/actions/checkout
@@ -109,6 +109,135 @@ jobs:
             --parameters deployedDate="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           
           echo "Validation successful"
+
+      # Run What-If Analysis for cost estimation
+      # Azure CLI what-if: https://learn.microsoft.com/en-us/cli/azure/deployment/sub#az-deployment-sub-what-if
+      - name: Run What-If Analysis
+        id: whatif
+        working-directorywaits for manual approval before proceeding
+    # Learn more: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idneeds
+    needs: [validate, approval-gate]t sub what-if \
+            --location ${{ steps.get-region.outputs.region }} \
+            --template-file bicep/main.bicep \
+            --parameters parameters/${{ env.ENVIRONMENT }}.bicepparam \
+            --parameters deployedBy="${{ github.actor }}" \
+            --parameters deployedDate="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --result-format ResourceIdOnly \
+            > whatif-${{ env.ENVIRONMENT }}.txt
+          
+          echo "What-if analysis complete"
+
+      # Calculate estimated monthly costs
+      # Azure Pricing: https://azure.microsoft.com/en-us/pricing/calculator/
+      - name: Estimate Monthly Costs
+        id: costs
+        run: |
+          echo "Estimating costs for ${{ env.ENVIRONMENT }} environment..."
+          
+          # Initialize cost variables
+          TOTAL_COST=0
+          COST_BREAKDOWN=""
+          
+          # App Service Plan (B1: Basic tier)
+          if grep -q "Microsoft.Web/serverfarms" whatif-${{ env.ENVIRONMENT }}.txt 2>/dev/null; then
+            APP_SERVICE_PLAN_COST=75
+            TOTAL_COST=$((TOTAL_COST + APP_SERVICE_PLAN_COST))
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- App Service Plan (B1): \$${APP_SERVICE_PLAN_COST}/month"
+          fi
+          
+          # Web App (included in plan)
+          if grep -q "Microsoft.Web/sites" whatif-${{ env.ENVIRONMENT }}.txt 2>/dev/null; then
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- Web App: Included in plan"
+          fi
+          
+          # Key Vault
+          if grep -q "Microsoft.KeyVault/vaults" whatif-${{ env.ENVIRONMENT }}.txt 2>/dev/null; then
+            KEY_VAULT_COST=5
+            TOTAL_COST=$((TOTAL_COST + KEY_VAULT_COST))
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- Key Vault: \$${KEY_VAULT_COST}/month"
+          fi
+          
+          # Virtual Network (free, data transfer charges may apply)
+          if grep -q "Microsoft.Network/virtualNetworks" whatif-${{ env.ENVIRONMENT }}.txt 2>/dev/null; then
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- Virtual Network: Free"
+          fi
+          
+          # Private Endpoints
+          if grep -q "Microsoft.Network/privateEndpoints" whatif-${{ env.ENVIRONMENT }}.txt 2>/dev/null; then
+            PE_COUNT=$(grep -c "Microsoft.Network/privateEndpoints" whatif-${{ env.ENVIRONMENT }}.txt || echo 0)
+            PE_COST=$((PE_COUNT * 10))
+            TOTAL_COST=$((TOTAL_COST + PE_COST))
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- Private Endpoints (${PE_COUNT}): \$${PE_COST}/month"
+          fi
+          
+          # Log Analytics
+          if grep -q "Microsoft.OperationalInsights/workspaces" whatif-${{ env.ENVIRONMENT }}.txt 2>/dev/null; then
+            LOG_ANALYTICS_COST=25
+            TOTAL_COST=$((TOTAL_COST + LOG_ANALYTICS_COST))
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- Log Analytics: \$${LOG_ANALYTICS_COST}/month"
+          fi
+          
+          # Virtual Machine
+          if grep -q "Microsoft.Compute/virtualMachines" whatif-${{ env.ENVIRONMENT }}.txt 2>/dev/null; then
+            VM_COST=60
+            TOTAL_COST=$((TOTAL_COST + VM_COST))
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- Virtual Machine (B2s): \$${VM_COST}/month"
+          fi
+          
+          # Application Gateway
+          if grep -q "Microsoft.Network/applicationGateways" whatif-${{ env.ENVIRONMENT }}.txt 2>/dev/null; then
+            APP_GW_COST=245
+            TOTAL_COST=$((TOTAL_COST + APP_GW_COST))
+            COST_BREAKDOWN="${COST_BREAKDOWN}\n- Application Gateway: \$${APP_GW_COST}/month"
+          fi
+          
+          # Set outputs
+          echo "totalCost=$TOTAL_COST" >> $GITHUB_OUTPUT
+          echo "costBreakdown<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$COST_BREAKDOWN" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+          echo "================================================"
+          echo "Estimated Monthly Cost: \$${TOTAL_COST} USD"
+          echo "================================================"
+
+      # Generate workflow summary with cost details
+      - name: Generate Cost Summary
+        run: |
+          echo "## 💰 Cost Estimation for DEV Environment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Estimated Monthly Cost:** \$${{ steps.costs.outputs.totalCost }} USD" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Cost Breakdown:" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.costs.outputs.costBreakdown }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "_Note: These are estimated costs. Actual costs may vary based on usage._" >> $GITHUB_STEP_SUMMARY
+
+  # Manual approval gate - requires user confirmation before deployment
+  approval-gate:
+    name: 🚦 Manual Approval Required
+    runs-on: ubuntu-latest
+    needs: validate
+    # Enable 'dev' environment for manual approval protection
+    # Configure in: Settings > Environments > dev > Add required reviewers
+    environment: dev
+    steps:
+      - name: Display Cost Estimate
+        run: |
+          echo "================================================"
+          echo "           DEPLOYMENT APPROVAL REQUIRED"
+          echo "================================================"
+          echo ""
+          echo "Estimated Monthly Cost: \$${{ needs.validate.outputs.totalCost }} USD"
+          echo ""
+          echo "Cost Breakdown:"
+          echo "${{ needs.validate.outputs.costBreakdown }}"
+          echo ""
+          echo "================================================"
+          echo "Review the cost estimate above before approving."
+          echo "This deployment will proceed after manual approval."
+          echo "================================================"
 
   # Infrastructure deployment job creates Azure resources using Bicep
   deploy-infrastructure:
