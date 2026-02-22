@@ -114,9 +114,11 @@ jobs:
       # Azure CLI what-if: https://learn.microsoft.com/en-us/cli/azure/deployment/sub#az-deployment-sub-what-if
       - name: Run What-If Analysis
         id: whatif
-        working-directorywaits for manual approval before proceeding
-    # Learn more: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idneeds
-    needs: [validate, approval-gate]t sub what-if \
+        working-directory: .
+        run: |
+          echo "Running what-if analysis for ${{ env.ENVIRONMENT }}..."
+          
+          az deployment sub what-if \
             --location ${{ steps.get-region.outputs.region }} \
             --template-file bicep/main.bicep \
             --parameters parameters/${{ env.ENVIRONMENT }}.bicepparam \
@@ -220,7 +222,8 @@ jobs:
     needs: validate
     # Enable 'dev' environment for manual approval protection
     # Configure in: Settings > Environments > dev > Add required reviewers
-    environment: dev
+    # Uncomment the line below after creating 'dev' environment in GitHub repo settings
+    # environment: dev
     steps:
       - name: Display Cost Estimate
         run: |
